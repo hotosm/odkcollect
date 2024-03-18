@@ -121,7 +121,20 @@ the specific language governing permissions and limitations under the License.
         <activity
             android:name=".activities.FormFillingActivity"
             android:theme="@style/Theme.Collect.FormEntry"
-            android:windowSoftInputMode="adjustResize" />
+            android:windowSoftInputMode="adjustResize"
+            android:exported="true">
+            <!--
+              This intent-filter enables the launching of FormFillingActivity
+              on a specific form via in-browser links in the format
+              "odkcollect://form/<form_id>" (see FormLoaderTask for details).
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <data android:scheme="odkcollect" android:host="form" />
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+            </intent-filter>
+        </activity>
         <activity
             android:name="org.odk.collect.draw.DrawActivity"
             android:screenOrientation="landscape" />
