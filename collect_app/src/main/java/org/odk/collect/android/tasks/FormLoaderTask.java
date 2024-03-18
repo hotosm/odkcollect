@@ -181,7 +181,10 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
             savepoint = savepointsRepository.get(form.getDbId(), null);
             instancePath = savepoint != null ? savepoint.getInstanceFilePath() : null;
         } else if (uri.getScheme().equals("odkcollect") && uri.getHost().equals("form")) {
-            // Launch a form from a browsable web link in the format: odkcollect://form/<form_id>
+            // When the FormFillingActivity is started via a browsable link in
+            // the format "odkcollect://form/<form_id>", we want to launch and
+            // load the form with the specified Form ID.  (<form_id> is the
+            // form ID in the form definition, not the local form ID.)
             String formId = uri.getPathSegments().get(0);
             List<Form> forms = new FormsRepositoryProvider(Collect.getInstance()).get().getAllByFormId(formId);
             if (forms.size() == 0) {
@@ -282,21 +285,32 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
             }
         }
 
+        // Preselect the entity specified in a URI query parameter, if any.
         preselectEntity(fc, uri);
 
         data = new FECWrapper(fc, usedSavepoint);
         return data;
     }
 
+    /**
+     * Prefills top-level select-one fields in the form, according to query
+     * parameters given in the intent URI.
+     */
     private void preselectEntity(FormController fc, Uri uri) {
+        // We need to save the current form index in order to restore it
+        // after iterating through the form.
         FormIndex saved = fc.getFormIndex();
         try {
+            // We assume that entity selection happens in a top-level question,
+            // so no need to step into groups, i.e. stepToNextEvent(false).
             for (int event = fc.jumpToIndex(FormIndex.createBeginningOfFormIndex());
                  event != FormEntryController.EVENT_END_OF_FORM;
                 event = fc.stepToNextEvent(false)) {
                 FormIndex index = fc.getFormIndex();
                 TreeReference ref = fc.getFormDef().getChildInstanceRef(index);
                 if (ref != null) {
+                    // If there's a query parameter matching this question,
+                    // we prefill the question using the parameter value.
                     String value = uri.getQueryParameter(ref.getNameLast());
                     if (value != null) {
                         try {
