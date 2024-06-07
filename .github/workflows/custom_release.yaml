@@ -1,0 +1,44 @@
+# Workflow to deploy custom builds on ODK Collect
+
+name: 🔧 Build and Release
+
+on:
+  release:
+    types: [published]
+  # Allow manual trigger (workflow_dispatch)
+  workflow_dispatch:
+
+jobs:
+  build_upload_apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    container:
+        image: docker.io/cimg/android:2024.01
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add Robolectric Deps
+        run: ./download-robolectric-deps.sh
+
+      - name: Compile Code
+        run: ./gradlew assembleDebug
+
+      - name: Install Github CLI
+        run: |
+          sudo apt update
+          sudo apt install --no-install-recommends -y gh
+
+      - name: Build & Upload APK
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./gradlew assembleSelfSignedRelease
+
+          apk_path=$(find ./collect_app/build/outputs/apk/selfSignedRelease -name '*.apk' -type f)
+          echo "Generated APK file: ${apk_path}"
+
+          gh release upload ${{ github.event.release.tag_name }} "${apk_path}"
