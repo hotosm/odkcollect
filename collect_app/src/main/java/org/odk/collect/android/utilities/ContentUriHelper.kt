@@ -18,6 +18,7 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import org.odk.collect.android.application.Collect
+import org.odk.collect.forms.Form
 
 object ContentUriHelper {
 
@@ -25,7 +26,16 @@ object ContentUriHelper {
     fun getIdFromUri(contentUri: Uri): Long {
         val lastSegmentIndex = contentUri.pathSegments.size - 1
         val idSegment = contentUri.pathSegments[lastSegmentIndex]
-        return idSegment.toLong()
+
+        var idSegmentNew = idSegment
+        /// get form dBId from form's jrFormId
+        if(idSegmentNew.contains("-")){
+            val forms: List<Form> =
+                FormsRepositoryProvider(Collect.getInstance()).get().getAllByFormId(idSegment)
+            idSegmentNew = "${forms.first().dbId}"
+        }
+
+        return idSegmentNew.toLong()
     }
 
     @JvmStatic

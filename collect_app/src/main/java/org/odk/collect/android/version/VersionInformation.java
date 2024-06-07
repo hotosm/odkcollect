@@ -45,9 +45,18 @@ public class VersionInformation {
         String[] components = getVersionDescriptionComponents();
 
         if (isBeta() && components.length > 3) {
-            return Integer.parseInt(components[2]);
+            try {
+                return Integer.parseInt(components[2]);
+            }catch (NumberFormatException numberFormatException){
+                return null;
+            }
         } else if (!isBeta() && components.length > 2) {
-            return Integer.parseInt(components[1]);
+            try {
+                return Integer.parseInt(components[1]);
+            }catch (NumberFormatException numberFormatException){
+                return null;
+            }
+
         } else {
             return null;
         }
