@@ -19,6 +19,7 @@ import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import org.odk.collect.android.application.Collect
 import org.odk.collect.forms.Form
+import timber.log.Timber
 
 object ContentUriHelper {
 
@@ -26,10 +27,15 @@ object ContentUriHelper {
     fun getIdFromUri(contentUri: Uri): Long {
         val idSegment = contentUri.pathSegments.last()
         if (idSegment.toLongOrNull() == null) {
-            val forms: List<Form> =
-                FormsRepositoryProvider(Collect.getInstance()).get().getAllByFormId(idSegment)
+            try {
+                val forms: List<Form> =
+                    FormsRepositoryProvider(Collect.getInstance()).get().getAllByFormId(idSegment)
+                return forms.firstOrNull()?.dbId ?: -1
+            } catch (e: Exception) {
+                Timber.e("Error getting form id: %s", e.message)
+            }
 
-            return forms.firstOrNull()?.dbId ?: -1
+            return -1
         }
 
         return idSegment.toLong()

@@ -70,7 +70,6 @@ import java.io.FileReader;
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
-import java.util.Objects;
 import java.util.Set;
 
 import timber.log.Timber;
@@ -182,17 +181,6 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
              * explicitly saved instance is edited via edit-saved-form.
              */
             instancePath = loadSavePoint();
-        } else if (Objects.equals(uri.getScheme(), "odkcollect") && Objects.equals(uri.getHost(), "form")) {
-            // When the FormFillingActivity is started via a browsable link in
-            // the format "odkcollect://form/<form_id>", we want to launch and
-            // load the form with the specified Form ID.  (<form_id> is the
-            // form ID in the form definition, not the local form ID.)
-            form = new FormsRepositoryProvider(Collect.getInstance()).get().get(ContentUriHelper.getIdFromUri(uri));
-            if (form == null) {
-                Timber.e(new Error("form is null"));
-                errorMsg = "This form no longer exists, please email support@getodk.org with a description of what you were doing when this happened.";
-                return null;
-            }
         }
 
         if (form.getFormFilePath() == null) {
