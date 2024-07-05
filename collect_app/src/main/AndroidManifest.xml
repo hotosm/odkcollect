@@ -97,7 +97,20 @@ the specific language governing permissions and limitations under the License.
         </provider>
 
         <activity
-            android:name=".activities.FirstLaunchActivity">
+            android:name=".activities.FirstLaunchActivity"
+            android:exported="true">
+
+            <!--
+             This intent-filter enables the launching of FirstLaunchActivity
+             via in-browser links in the format
+             "odkcollect://project/configuration?data=<settings-data>"
+           -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <data android:scheme="odkcollect" android:host="project" />
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+            </intent-filter>
         </activity>
 
         <activity
