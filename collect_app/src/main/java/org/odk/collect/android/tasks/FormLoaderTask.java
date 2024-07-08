@@ -29,6 +29,8 @@ import com.opencsv.exceptions.CsvValidationException;
 
 import org.javarosa.core.model.FormDef;
 import org.javarosa.core.model.FormIndex;
+import org.javarosa.core.model.data.SelectOneData;
+import org.javarosa.core.model.data.helper.Selection;
 import org.javarosa.core.model.instance.InstanceInitializationFactory;
 import org.javarosa.core.model.instance.TreeElement;
 import org.javarosa.core.model.instance.TreeReference;
@@ -42,6 +44,7 @@ import org.odk.collect.android.application.Collect;
 import org.odk.collect.android.dynamicpreload.ExternalAnswerResolver;
 import org.odk.collect.android.dynamicpreload.ExternalDataManager;
 import org.odk.collect.android.dynamicpreload.ExternalDataUseCases;
+import org.odk.collect.android.exception.JavaRosaException;
 import org.odk.collect.android.external.FormsContract;
 import org.odk.collect.android.external.InstancesContract;
 import org.odk.collect.android.fastexternalitemset.ItemsetDbAdapter;
@@ -175,8 +178,26 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
                 return null;
             }
 
+            /**
+             * This is the fill-blank-form code path.See if there is a savepoint for this form
+             * that has never been explicitly saved by the user. If there is, open this savepoint(resume this filled-in form).
+             * Savepoints for forms that were explicitly saved will be recovered when that
+             * explicitly saved instance is edited via edit-saved-form.
+             */
             savepoint = savepointsRepository.get(form.getDbId(), null);
             instancePath = savepoint != null ? savepoint.getInstanceFilePath() : null;
+        } else if (uri.getScheme().equals("odkcollect") && uri.getHost().equals("form")) {
+            // When the FormFillingActivity is started via a browsable link in
+            // the format "odkcollect://form/<form_id>", we want to launch and
+            // load the form with the specified Form ID.  (<form_id> is the
+            // form ID in the form definition, not the local form ID.)
+            String formId = uri.getPathSegments().get(0);
+            List<Form> forms = new FormsRepositoryProvider(Collect.getInstance()).get().getAllByFormId(formId);
+            if (forms.size() == 0) {
+                Timber.e(new Error("Form not found for URL: " + uri));
+                return null;
+            }
+            form = forms.get(0);
         }
 
         if (form.getFormFilePath() == null) {
@@ -269,8 +290,46 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
                 fc.setIndexWaitingForData(idx);
             }
         }
+
+        // Preselect the entity specified in a URI query parameter, if any.
+        preselectEntity(fc, uri);
+
         data = new FECWrapper(fc, usedSavepoint);
         return data;
+    }
+
+    /**
+     * Prefills top-level select-one fields in the form, according to query
+     * parameters given in the intent URI.
+     */
+    private void preselectEntity(FormController fc, Uri uri) {
+        // We need to save the current form index in order to restore it
+        // after iterating through the form.
+        FormIndex saved = fc.getFormIndex();
+        try {
+            // We assume that entity selection happens in a top-level question,
+            // so no need to step into groups, i.e. stepToNextEvent(false).
+            for (int event = fc.jumpToIndex(FormIndex.createBeginningOfFormIndex());
+                 event != FormEntryController.EVENT_END_OF_FORM;
+                event = fc.stepToNextEvent(false)) {
+                FormIndex index = fc.getFormIndex();
+                TreeReference ref = fc.getFormDef().getChildInstanceRef(index);
+                if (ref != null) {
+                    // If there's a query parameter matching this question,
+                    // we prefill the question using the parameter value.
+                    String value = uri.getQueryParameter(ref.getNameLast());
+                    if (value != null) {
+                        try {
+                            fc.answerQuestion(index, new SelectOneData(new Selection(value)));
+                        } catch (JavaRosaException e) {
+                            Timber.w("Could not preselect answer " + value + " for question " + ref);
+                        }
+                    }
+                }
+            }
+        } finally {
+            fc.jumpToIndex(saved);
+        }
     }
 
     private static void unzipMediaFiles(File formMediaDir) {
