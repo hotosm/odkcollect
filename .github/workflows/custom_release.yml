@@ -32,13 +32,36 @@ jobs:
           sudo apt update
           sudo apt install --no-install-recommends -y gh
 
-      - name: Build & Upload APK
+      - name: Debug APK
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           ./gradlew assembleSelfSignedRelease
 
           apk_path=$(find ./collect_app/build/outputs/apk/selfSignedRelease -name '*.apk' -type f)
+          echo "Generated APK file: ${apk_path}"
+
+          gh release upload ${{ github.event.release.tag_name }} "${apk_path}"
+
+      - name: Add Signing Key
+        run: |
+          # hotosm.keystore is base64 encoded secret string, first decode
+          echo ${{ secrets.KEYSTORE_FILE_BASE64 }} | base64 --decode > hotosm.keystore
+
+          echo "RELEASE_STORE_FILE=hotosm.keystore" > secrets.properties
+          echo "RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_STOREPASS }}" >> secrets.properties
+          echo "RELEASE_KEY_ALIAS=hotosm-android" >> secrets.properties
+          echo "RELEASE_KEY_PASSWORD=${{ secrets.KEYSTORE_KEYPASS }}" >> secrets.properties
+
+          cp collect_app/src/release/google-services.json collect_app/src/odkCollectRelease/
+
+      - name: Signed APK
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./gradlew releaseCheck
+
+          apk_path=$(find ./collect_app/build/outputs/apk -name '*.apk' -type f)
           echo "Generated APK file: ${apk_path}"
 
           gh release upload ${{ github.event.release.tag_name }} "${apk_path}"
