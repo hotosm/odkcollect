@@ -39,20 +39,23 @@ jobs:
           ./gradlew assembleSelfSignedRelease
 
           apk_path=$(find ./collect_app/build/outputs/apk/selfSignedRelease -name '*.apk' -type f)
+          debug_apk_path="${apk_path%.apk}-debug.apk"
           echo "Generated APK file: ${apk_path}"
+          mv "${apk_path}" "${debug_apk_path}"
 
-          gh release upload ${{ github.event.release.tag_name }} "${apk_path}"
+          gh release upload ${{ github.event.release.tag_name }} "${debug_apk_path}"
 
       - name: Add Signing Key
         run: |
           # hotosm.keystore is base64 encoded secret string, first decode
-          echo ${{ secrets.KEYSTORE_FILE_BASE64 }} | base64 --decode > hotosm.keystore
+          echo "${{ secrets.KEYSTORE_FILE_BASE64 }}" | base64 --decode > hotosm.keystore
 
           echo "RELEASE_STORE_FILE=hotosm.keystore" > secrets.properties
           echo "RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_STOREPASS }}" >> secrets.properties
           echo "RELEASE_KEY_ALIAS=hotosm-android" >> secrets.properties
           echo "RELEASE_KEY_PASSWORD=${{ secrets.KEYSTORE_KEYPASS }}" >> secrets.properties
 
+          mkdir -p collect_app/src/odkCollectRelease
           cp collect_app/src/release/google-services.json collect_app/src/odkCollectRelease/
 
       - name: Signed APK
