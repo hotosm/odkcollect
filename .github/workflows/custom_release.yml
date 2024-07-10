@@ -50,6 +50,11 @@ jobs:
           # hotosm.keystore is base64 encoded secret string, first decode
           echo "${{ secrets.KEYSTORE_FILE_BASE64 }}" | base64 --decode > hotosm.keystore
 
+          # Verify the keystore file is correctly created
+          echo "Current dir: ${PWD}"
+          echo "Keystore location: ${{ github.workspace }}/hotosm.keystore"
+          ls -la hotosm.keystore
+
           echo "RELEASE_STORE_FILE=${{ github.workspace }}/hotosm.keystore" > secrets.properties
           echo "RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_STOREPASS }}" >> secrets.properties
           echo "RELEASE_KEY_ALIAS=hotosm-android" >> secrets.properties
@@ -62,6 +67,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # Check that keystore exists
+          ls -la ${{ github.workspace }}
+
           ./gradlew releaseCheck
 
           apk_path=$(find ./collect_app/build/outputs/apk -name '*.apk' -type f)
