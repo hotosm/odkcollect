@@ -48,14 +48,14 @@ jobs:
       - name: Add Signing Key
         run: |
           # hotosm.keystore is base64 encoded secret string, first decode
-          echo "${{ secrets.KEYSTORE_FILE_BASE64 }}" | base64 --decode > hotosm.keystore
+          echo "${{ secrets.KEYSTORE_FILE_BASE64 }}" | base64 --decode > "$GITHUB_WORKSPACE/hotosm.keystore"
 
           # Verify the keystore file is correctly created
           echo "Current dir: ${PWD}"
-          echo "Keystore location: ${{ github.workspace }}/hotosm.keystore"
+          echo "Keystore location: $GITHUB_WORKSPACE/hotosm.keystore"
           ls -la hotosm.keystore
 
-          echo "RELEASE_STORE_FILE=${{ github.workspace }}/hotosm.keystore" > secrets.properties
+          echo "RELEASE_STORE_FILE=$GITHUB_WORKSPACE/hotosm.keystore" > secrets.properties
           echo "RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_STOREPASS }}" >> secrets.properties
           echo "RELEASE_KEY_ALIAS=hotosm-android" >> secrets.properties
           echo "RELEASE_KEY_PASSWORD=${{ secrets.KEYSTORE_KEYPASS }}" >> secrets.properties
@@ -68,7 +68,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Check that keystore exists
-          ls -la ${{ github.workspace }}
+          ls -la "$GITHUB_WORKSPACE"
 
           ./gradlew releaseCheck
 
