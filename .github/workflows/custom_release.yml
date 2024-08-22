@@ -70,6 +70,10 @@ jobs:
           # Check that keystore exists
           ls -la "$GITHUB_WORKSPACE"
 
+          # Comment out the 'testLab' config on lines 100-117 of build.gradle
+          # This breaks the build as it relies on firebase
+          sed -i '100,117s/^/\/\/ /' build.gradle
+
           ./gradlew releaseCheck
 
           apk_path=$(find ./collect_app/build/outputs/apk -name '*.apk' -type f)
