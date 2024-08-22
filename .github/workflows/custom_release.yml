@@ -72,7 +72,7 @@ jobs:
 
           ./gradlew collect_app:assembleOdkCollectRelease
 
-          apk_path=$(find ./collect_app/build/outputs/apk -name '*.apk' -type f)
-          echo "Generated APK file: ${apk_path}"
+          signed_apk_path=$(find ./collect_app/build/outputs/apk/odkCollectRelease -name '*.apk' -type f)
+          echo "Generated APK file: ${signed_apk_path}"
 
-          gh release upload ${{ github.event.release.tag_name }} "${apk_path}"
+          gh release upload ${{ github.event.release.tag_name }} "${signed_apk_path}"
