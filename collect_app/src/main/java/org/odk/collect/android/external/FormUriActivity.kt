@@ -87,23 +87,29 @@ class FormUriActivity : ComponentActivity() {
         DaggerUtils.getComponent(this).inject(this)
         setContentView(R.layout.circular_progress_indicator)
 
-        formUriViewModel.error.observe(this) {
-            if (it != null) {
-                displayErrorDialog(it)
-            } else if (savedInstanceState?.getBoolean(FORM_FILLING_ALREADY_STARTED) != true) {
-                startForm()
+        formUriViewModel.formUriValidationResult.observe(this) {
+            when (it) {
+                is Valid -> {
+                    if (savedInstanceState?.getBoolean(FORM_FILLING_ALREADY_STARTED) != true) {
+                        startForm(it.uri)
+                    }
+                }
+
+                is Invalid -> {
+                    displayErrorDialog(it.message)
+                }
             }
         }
     }
 
-    private fun startForm() {
+    private fun startForm(uri: Uri) {
         formFillingAlreadyStarted = true
         openForm.launch(
             Intent(this, FormFillingActivity::class.java).apply {
                 action = intent.action
-                data = intent.data
+                data = uri
                 intent.extras?.let { sourceExtras -> putExtras(sourceExtras) }
-                if (!canFormBeEdited()) {
+                if (!canFormBeEdited(uri)) {
                     putExtra(
                         ApplicationConstants.BundleKeys.FORM_MODE,
                         ApplicationConstants.FormModes.VIEW_SENT
@@ -122,8 +128,7 @@ class FormUriActivity : ComponentActivity() {
             .show()
     }
 
-    private fun canFormBeEdited(): Boolean {
-        val uri = intent.data!!
+    private fun canFormBeEdited(uri: Uri): Boolean {
         val uriMimeType = contentResolver.getType(uri)
 
         val formEditingEnabled = if (uriMimeType == InstancesContract.CONTENT_ITEM_TYPE) {
@@ -157,23 +162,79 @@ private class FormUriViewModel(
     private val resources: Resources
 ) : ViewModel() {
 
-    private val _error = MutableLiveData<String?>()
-    val error: LiveData<String?> = _error
+
+    // This is just for handling and reassigning uri
+    // When the FormUriActivity is started via a browsable link in
+    // the format "odkcollect://form/<form_id>"
+    private var _uri: Uri? = uri
+
+    private val _formUriValidationResult = MutableLiveData<FormUriValidationResult>()
+    val formUriValidationResult: LiveData<FormUriValidationResult> = _formUriValidationResult
 
     init {
         scheduler.immediate(
             background = {
+                // If from the browsable link in the format "odkcollect://form/<form_id>",
+                // We will modify the uri to make it valid for the FormFillingActivity
+                if (uri?.scheme == "odkcollect" && uri.host == "form") {
+
+                    // Get the form id from the uri
+                    val formId = ContentUriHelper.getIdFromUri(uri)
+
+                    // If the form id is not valid i.e. -1, return with error message
+                    if (formId == -1L) {
+                        return@immediate "${resources.getString(string.wrong_project_selected_for_form)} And conform that it is downloaded."
+                    }
+
+                    // Getting currently active project id
+                    val currentProjectId = try {
+                        projectsDataService.getCurrentProject().uuid
+                    } catch (e: Exception) {
+                        null
+                    }
+
+                    // Else build the new uri
+                    // We will modify the uri to make it valid for the FormFillingActivity
+                    val tempUri = FormsContract.getUri(null)
+                    val builder = Uri.Builder()
+                        .scheme(tempUri.scheme)
+                        .authority(tempUri.authority)
+                        .appendPath(tempUri.lastPathSegment)
+                        .appendPath(ContentUriHelper.getIdFromUri(uri).toString())
+
+                    // If projectId is not present in the uri, add it
+                    if (!uri.queryParameterNames.contains("projectId")) {
+                        builder.appendQueryParameter("projectId", currentProjectId)
+                    }
+
+                    // add all the query parameters from the uri
+                    uri.queryParameterNames?.forEach { key ->
+                        builder.appendQueryParameter(key, uri.getQueryParameter(key))
+                    }
+
+                    // Build the new uri
+                    _uri = builder.build()
+                }
+
                 assertProjectListNotEmpty() ?: assertCurrentProjectUsed() ?: assertValidUri()
-                    ?: assertFormExists() ?: assertFormNotEncrypted()
+                ?: assertFormExists() ?: assertFormNotEncrypted()
             },
             foreground = {
-                _error.value = it
+                _formUriValidationResult.value = if (it == null) {
+                    Valid(_uri!!)
+                } else {
+                    Invalid(it)
+                }
             }
         )
     }
 
     private fun assertProjectListNotEmpty(): String? {
-        val projects = projectsRepository.getAll()
+        val projects = try {
+            projectsRepository.getAll()
+        } catch (e: Exception) {
+            emptyList()
+        }
         return if (projects.isEmpty()) {
             resources.getString(string.app_not_configured)
         } else {
@@ -182,12 +243,20 @@ private class FormUriViewModel(
     }
 
     private fun assertCurrentProjectUsed(): String? {
-        val projects = projectsRepository.getAll()
-        val firstProject = projects.first()
-        val uriProjectId = uri?.getQueryParameter("projectId")
-        val projectId = uriProjectId ?: firstProject.uuid
+        val uriProjectId = _uri?.getQueryParameter("projectId")
+        val projectId = if (uriProjectId != null) uriProjectId else {
+            val projects = projectsRepository.getAll()
+            val firstProject = projects.first()
+            firstProject.uuid
+        }
 
-        return if (projectId != projectsDataService.getCurrentProject().uuid) {
+        val currentProjectId = try {
+            projectsDataService.getCurrentProject().uuid
+        } catch (e: Exception) {
+            null
+        }
+
+        return if (projectId != currentProjectId) {
             resources.getString(string.wrong_project_selected_for_form)
         } else {
             null
@@ -195,7 +264,7 @@ private class FormUriViewModel(
     }
 
     private fun assertValidUri(): String? {
-        val isUriValid = uri?.let {
+        val isUriValid = _uri?.let {
             val uriMimeType = contentResolver.getType(it)
             if (uriMimeType == null) {
                 false
@@ -212,13 +281,14 @@ private class FormUriViewModel(
     }
 
     private fun assertFormExists(): String? {
-        val uriMimeType = contentResolver.getType(uri!!)
+        val uriMimeType = contentResolver.getType(_uri!!)
 
         return if (uriMimeType == FormsContract.CONTENT_ITEM_TYPE) {
             val formExists =
-                formsRepositoryProvider.get().get(ContentUriHelper.getIdFromUri(uri))?.let {
-                    File(it.formFilePath).exists()
-                } ?: false
+                formsRepositoryProvider.get().get(ContentUriHelper.getIdFromUri(_uri!!))
+                    ?.let {
+                        File(it.formFilePath).exists()
+                    } ?: false
 
             if (formExists) {
                 null
@@ -226,7 +296,8 @@ private class FormUriViewModel(
                 resources.getString(string.bad_uri)
             }
         } else {
-            val instance = instancesRepositoryProvider.get().get(ContentUriHelper.getIdFromUri(uri))
+            val instance =
+                instancesRepositoryProvider.get().get(ContentUriHelper.getIdFromUri(_uri!!))
             if (instance == null) {
                 resources.getString(string.bad_uri)
             } else if (!File(instance.instanceFilePath).exists()) {
@@ -247,7 +318,10 @@ private class FormUriViewModel(
                         "\n${resources.getString(string.version)} ${instance.formVersion}"
                     }
 
-                    resources.getString(string.parent_form_not_present, "${instance.formId}$version")
+                    resources.getString(
+                        string.parent_form_not_present,
+                        "${instance.formId}$version"
+                    )
                 } else if (candidateForms.filter { !it.isDeleted }.size > 1) {
                     resources.getString(string.survey_multiple_forms_error)
                 } else {
@@ -258,10 +332,11 @@ private class FormUriViewModel(
     }
 
     private fun assertFormNotEncrypted(): String? {
-        val uriMimeType = contentResolver.getType(uri!!)
+        val uriMimeType = contentResolver.getType(_uri!!)
 
         return if (uriMimeType == InstancesContract.CONTENT_ITEM_TYPE) {
-            val instance = instancesRepositoryProvider.get().get(ContentUriHelper.getIdFromUri(uri))
+            val instance =
+                instancesRepositoryProvider.get().get(ContentUriHelper.getIdFromUri(_uri!!))
             if (instance!!.canEditWhenComplete()) {
                 null
             } else {
@@ -272,3 +347,22 @@ private class FormUriViewModel(
         }
     }
 }
+
+/**
+ * Represents the result of validating a form URI.
+ *It can either be a [Valid] containing the valid URI,
+ * or an [Invalid] with an error message.
+ */
+private sealed class FormUriValidationResult
+
+/**
+ * Represents a successfully validated form URI.
+ * @property uri The valid URI.
+ */
+private data class Valid(val uri: Uri) : FormUriValidationResult()
+
+/**
+ * Represents an invalid form URI with an associated error message.
+ * @property message The error message explaining why the URI is invalid.
+ */
+private data class Invalid(val message: String) : FormUriValidationResult()

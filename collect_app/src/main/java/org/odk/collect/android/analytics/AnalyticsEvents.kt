@@ -74,6 +74,11 @@ object AnalyticsEvents {
     const val QR_CREATE_PROJECT = "ProjectCreateQR"
 
     /**
+     * Tracks how often projects are created using deeplink.
+     */
+    const val DEEPLINK_CREATE_PROJECT = "ProjectCreateDeeplink"
+
+    /**
      * Tracks how often projects are created by manually entering details.
      */
     const val MANUAL_CREATE_PROJECT = "ProjectCreateManual"

@@ -18,28 +18,45 @@ import android.net.Uri
 import android.provider.MediaStore
 import android.webkit.MimeTypeMap
 import org.odk.collect.android.application.Collect
+import org.odk.collect.forms.Form
+import timber.log.Timber
 
 object ContentUriHelper {
 
     @JvmStatic
     fun getIdFromUri(contentUri: Uri): Long {
-        val lastSegmentIndex = contentUri.pathSegments.size - 1
-        val idSegment = contentUri.pathSegments[lastSegmentIndex]
+        val idSegment = contentUri.pathSegments.last()
+        if (idSegment.toLongOrNull() == null) {
+            try {
+                val forms: List<Form> =
+                    FormsRepositoryProvider(Collect.getInstance()).get().getAllByFormId(idSegment)
+                return forms.firstOrNull()?.dbId ?: -1
+            } catch (e: Exception) {
+                Timber.e("Error getting form id: %s", e.message)
+            }
+
+            return -1
+        }
+
         return idSegment.toLong()
     }
 
     @JvmStatic
     fun getFileExtensionFromUri(fileUri: Uri): String? {
         val mimeType = Collect.getInstance().contentResolver.getType(fileUri)
-        var extension = if (fileUri.scheme != null && fileUri.scheme == ContentResolver.SCHEME_CONTENT) MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) else MimeTypeMap.getFileExtensionFromUrl(fileUri.toString())
-        if (extension == null || extension.isEmpty()) {
-            Collect.getInstance().contentResolver.query(fileUri, null, null, null, null).use { cursor ->
-                var name: String? = null
-                if (cursor != null && cursor.moveToFirst()) {
-                    name = cursor.getString(cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME))
+        var extension =
+            if (fileUri.scheme != null && fileUri.scheme == ContentResolver.SCHEME_CONTENT) MimeTypeMap.getSingleton()
+                .getExtensionFromMimeType(mimeType) else MimeTypeMap.getFileExtensionFromUrl(fileUri.toString())
+        if (extension.isNullOrEmpty()) {
+            Collect.getInstance().contentResolver.query(fileUri, null, null, null, null)
+                .use { cursor ->
+                    var name: String? = null
+                    if (cursor != null && cursor.moveToFirst()) {
+                        name =
+                            cursor.getString(cursor.getColumnIndex(MediaStore.MediaColumns.DISPLAY_NAME))
+                    }
+                    extension = name?.substring(name.lastIndexOf('.') + 1) ?: ""
                 }
-                extension = name?.substring(name.lastIndexOf('.') + 1) ?: ""
-            }
         }
 
         if (extension!!.isEmpty() && mimeType != null && mimeType.contains("/")) {
