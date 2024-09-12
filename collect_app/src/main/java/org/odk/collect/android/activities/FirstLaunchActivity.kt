@@ -14,8 +14,11 @@ import org.odk.collect.android.databinding.FirstLaunchLayoutBinding
 import org.odk.collect.android.injection.DaggerUtils
 import org.odk.collect.android.mainmenu.MainMenuActivity
 import org.odk.collect.android.projects.ManualProjectCreatorDialog
+import org.odk.collect.android.projects.ProjectCreator
 import org.odk.collect.android.projects.ProjectsDataService
 import org.odk.collect.android.projects.QrCodeProjectCreatorDialog
+import org.odk.collect.android.projects.SettingsConnectionMatcher
+import org.odk.collect.android.utilities.ProjectSetupFromUriHelper
 import org.odk.collect.android.version.VersionInformation
 import org.odk.collect.androidshared.system.ContextUtils.getThemeAttributeValue
 import org.odk.collect.androidshared.ui.DialogFragmentUtils
@@ -25,6 +28,7 @@ import org.odk.collect.projects.Project
 import org.odk.collect.projects.ProjectsRepository
 import org.odk.collect.settings.SettingsProvider
 import org.odk.collect.strings.localization.LocalizedActivity
+import timber.log.Timber
 import javax.inject.Inject
 
 class FirstLaunchActivity : LocalizedActivity() {
@@ -40,6 +44,9 @@ class FirstLaunchActivity : LocalizedActivity() {
 
     @Inject
     lateinit var settingsProvider: SettingsProvider
+
+    @Inject
+    lateinit var projectCreator: ProjectCreator
 
     @Inject
     lateinit var scheduler: Scheduler
@@ -102,7 +109,12 @@ class FirstLaunchActivity : LocalizedActivity() {
                 text = SpannableStringBuilder()
                     .append(getString(org.odk.collect.strings.R.string.dont_have_project))
                     .append(" ")
-                    .color(getThemeAttributeValue(context, com.google.android.material.R.attr.colorAccent)) {
+                    .color(
+                        getThemeAttributeValue(
+                            context,
+                            com.google.android.material.R.attr.colorAccent
+                        )
+                    ) {
                         append(getString(org.odk.collect.strings.R.string.try_demo))
                     }
 
@@ -110,6 +122,41 @@ class FirstLaunchActivity : LocalizedActivity() {
                     viewModel.tryDemo()
                 }
             }
+
+            // When the FirstLaunchActivity is started via a browsable link in
+            // the format "odkcollect://project/configuration?data=<settings-data>",
+            // setup project automatically if data is valid
+            initiateProjectSetUp()
+        }
+    }
+
+    /**
+     * Method to initiate project setup from a URI.
+     * When the FirstLaunchActivity is started via a browsable link in
+     * the format "odkcollect://project/configuration?data=<settings-data>",
+     * setup project automatically if data is valid
+     */
+    private fun initiateProjectSetUp() {
+        try {
+            val uri = intent.data
+
+            if (uri?.scheme != "odkcollect" || uri.host != "project") return
+
+            val segment = uri.pathSegments.firstOrNull()
+
+            if (segment != "configuration") return
+
+            val helper = ProjectSetupFromUriHelper(
+                this,
+                SettingsConnectionMatcher(projectsRepository, settingsProvider),
+                projectCreator,
+                projectsDataService
+            )
+
+            helper.initiateSetup(uri)
+
+        } catch (e: Exception) {
+            Timber.e(e)
         }
     }
 }

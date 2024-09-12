@@ -44,6 +44,11 @@ object AnalyticsEvents {
     const val MANUAL_CREATE_PROJECT = "ProjectCreateManual"
 
     /**
+     * Tracks how often projects are created from deep links.
+     */
+    const val DEEPLINK_CREATE_PROJECT = "ProjectCreateDeepLink"
+
+    /**
      * Tracks how often projects with the same connection settings as an existing one are attempted
      * to be created.
      */
@@ -84,6 +89,8 @@ object AnalyticsEvents {
     const val INSTANCE_PROVIDER_QUERY = "InstanceProviderQuery"
 
     const val INSTANCE_PROVIDER_INSERT = "InstanceProviderInsert"
+
+    const val INSTANCE_PROVIDER_UPDATE = "InstanceProviderUpdate"
 
     const val INSTANCE_PROVIDER_DELETE = "InstanceProviderDelete"
 
