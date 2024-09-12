@@ -29,12 +29,14 @@ import com.opencsv.exceptions.CsvValidationException;
 
 import org.javarosa.core.model.FormDef;
 import org.javarosa.core.model.FormIndex;
+import org.javarosa.core.model.data.IAnswerData;
 import org.javarosa.core.model.instance.InstanceInitializationFactory;
 import org.javarosa.core.model.instance.TreeElement;
 import org.javarosa.core.model.instance.TreeReference;
 import org.javarosa.core.model.instance.utils.DefaultAnswerResolver;
 import org.javarosa.core.reference.ReferenceManager;
 import org.javarosa.form.api.FormEntryController;
+import org.javarosa.form.api.FormEntryPrompt;
 import org.javarosa.xform.parse.XFormParser;
 import org.javarosa.xform.util.XFormUtils;
 import org.javarosa.xpath.XPathTypeMismatchException;
@@ -70,6 +72,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 
 import timber.log.Timber;
 
@@ -275,6 +278,10 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
                 fc.setIndexWaitingForData(idx);
             }
         }
+
+        // Preselect the entity specified in a URI query parameter, if any.
+        preselectEntity(fc, uri);
+
         data = new FECWrapper(fc, usedSavepoint);
         return data;
     }
@@ -305,6 +312,89 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
                     formFileBytesSize,
                     String.join(", ", csvFileBytesSizes)
             );
+        }
+    }
+
+    /**
+     * Prefills top-level select-one fields in the form, according to query
+     * parameters given in the intent URI.
+     */
+    private void preselectEntity(FormController fc, Uri uri) {
+        // Getting set of query parameters name from the uri
+        Set<String> queryParameterNames = uri.getQueryParameterNames();
+
+        // Checking if parameters name is null or empty
+        // If query parameters name is null or empty, then we don't need to preselect
+        // So we return from here
+        if (queryParameterNames == null || queryParameterNames.isEmpty()) return;
+
+        // Odk by default pass projectId as a query parameter.
+        // If query parameters name only contains projectId, then we don't need to preselect
+        // So we return from here
+        if (queryParameterNames.size() == 1 && queryParameterNames.contains("projectId")) return;
+
+        // We need to save the current form index in order to restore it
+        // after iterating through the form.
+        FormIndex saved = fc.getFormIndex();
+        try {
+            // We assume that entity selection might happens in a top-level question and groups
+            // so we also need to step into groups, i.e. stepToNextEvent(true).
+            for (int event = fc.jumpToIndex(FormIndex.createBeginningOfFormIndex());
+                 event != FormEntryController.EVENT_END_OF_FORM;
+                 event = fc.stepToNextEvent(true)) {
+
+                // Getting current form index
+                // It is an immutable index which is structured
+                // to provide quick access to a specific node in a FormDef
+                FormIndex index = fc.getFormIndex();
+
+                // If index is null, then we don't need to preselect
+                if (index == null) continue;
+
+                // Getting form definition
+                // It contains the metadata about the form definition
+                // and a collection of groups together with question branching or skipping rules
+                FormDef def = fc.getFormDef();
+
+                // Id def is null continue
+                if (def == null) continue;
+
+                // Now getting tree reference from the current form index
+                TreeReference ref = def.getChildInstanceRef(index);
+
+                // If ref is null continue
+                if (ref == null) continue;
+
+                // Else getting value from the query parameters as per the ref name
+                String value = uri.getQueryParameter(ref.getNameLast());
+
+                // If value is null continue
+                if (value == null) continue;
+
+                // Else preselect the answer
+                try {
+                    // Getting form entry prompt for the form index
+                    // It provides all the information regarding question
+                    FormEntryPrompt prompt = fc.getQuestionPrompt(index);
+
+                    // If form entry prompt is null continue
+                    if (prompt == null) continue;
+
+                    // Else creating answer data as per the prompt data type
+                    // It will automatically create required IAnswerData as per the prompt data type
+                    IAnswerData answer = IAnswerData.wrapData(value, prompt.getDataType());
+
+                    // Finally we are preselecting the answer
+                    fc.answerQuestion(index, answer);
+
+                } catch (Exception e) {
+                    Timber.w("Could not preselect answer %s for index %s", value, index.getLocalIndex());
+                }
+            }
+        } catch (Exception e) {
+            Timber.w("Could not preselect answer due to: %s", e.getMessage());
+        } finally {
+            fc.jumpToIndex(saved);
         }
     }
 
@@ -431,7 +521,7 @@ public class FormLoaderTask extends SchedulerAsyncTaskMimic<Void, String, FormLo
                         // The saved instance is corrupted.
                         Timber.e(e, "Corrupt saved instance");
                         throw new RuntimeException("An unknown error has occurred. Please ask your project leadership to email support@getodk.org with information about this form."
-                            + "\n\n" + e.getMessage());
+                                + "\n\n" + e.getMessage());
                     }
                 }
             } else {

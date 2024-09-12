@@ -100,7 +100,21 @@ the specific language governing permissions and limitations under the License.
         </provider>
 
         <activity
-            android:name=".activities.FirstLaunchActivity">
+            android:name=".activities.FirstLaunchActivity"
+            android:exported="true">
+
+            <!--
+             This intent-filter enables the launching of FirstLaunchActivity
+             via in-browser links in the format
+             "odkcollect://project/configuration?data=<settings-data>"
+             to set up the project.
+           -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <data android:scheme="odkcollect" android:host="project" />
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
+            </intent-filter>
         </activity>
 
         <activity
@@ -324,6 +338,19 @@ the specific language governing permissions and limitations under the License.
                 <category android:name="android.intent.category.DEFAULT" />
                 <data android:mimeType="vnd.android.cursor.item/vnd.odk.form" />
                 <data android:mimeType="vnd.android.cursor.item/vnd.odk.instance" />
+            </intent-filter>
+
+            <!--
+              This intent-filter enables the launching of FormUriActivity
+              via in-browser links in the format
+              "odkcollect://form/<form_id>" (see FormUriActivity for details).
+              It leads to open the form with the given form id with pre filled forms
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW"/>
+                <data android:scheme="odkcollect" android:host="form" />
+                <category android:name="android.intent.category.DEFAULT"/>
+                <category android:name="android.intent.category.BROWSABLE"/>
             </intent-filter>
         </activity>
         <activity android:name="org.odk.collect.android.formhierarchy.FormHierarchyFragmentHostActivity" />

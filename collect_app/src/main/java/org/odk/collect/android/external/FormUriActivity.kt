@@ -109,23 +109,37 @@ class FormUriActivity : LocalizedActivity() {
         formUriViewModel.formInspectionResult.observe(this) {
             when (it) {
                 is FormInspectionResult.Error -> displayErrorDialog(it.error)
-                is FormInspectionResult.Savepoint -> displaySavePointRecoveryDialog(it.savepoint)
-                is FormInspectionResult.Valid -> startForm(intent.data!!)
+                is FormInspectionResult.Savepoint -> displaySavePointRecoveryDialog(
+                    it.savepoint,
+                    it.uri!!
+                )
+
+                is FormInspectionResult.Valid -> startForm(it.uri)
             }
         }
     }
 
-    private fun displaySavePointRecoveryDialog(savepoint: Savepoint) {
+    private fun displaySavePointRecoveryDialog(savepoint: Savepoint, uri: Uri) {
         MaterialAlertDialogBuilder(this)
             .setTitle(string.savepoint_recovery_dialog_title)
-            .setMessage(SimpleDateFormat(getString(string.savepoint_recovery_dialog_message), Locale.getDefault()).format(File(savepoint.savepointFilePath).lastModified()))
+            .setMessage(
+                SimpleDateFormat(
+                    getString(string.savepoint_recovery_dialog_message),
+                    Locale.getDefault()
+                ).format(File(savepoint.savepointFilePath).lastModified())
+            )
             .setPositiveButton(string.recover) { _, _ ->
-                val uri = intent.data!!
+                // val uri = intent.data!!
                 val uriMimeType = contentResolver.getType(uri)!!
                 if (uriMimeType == FormsContract.CONTENT_ITEM_TYPE) {
-                    startForm(FormsContract.getUri(projectsDataService.getCurrentProject().uuid, savepoint.formDbId))
+                    startForm(
+                        FormsContract.getUri(
+                            projectsDataService.getCurrentProject().uuid,
+                            savepoint.formDbId
+                        )
+                    )
                 } else {
-                    startForm(intent.data!!)
+                    startForm(uri)
                 }
             }
             .setNegativeButton(string.do_not_recover) { _, _ ->
@@ -180,7 +194,8 @@ private class FormUriViewModel(
     private val changeLockProvider: ChangeLockProvider,
     private val resources: Resources
 ) : ViewModel() {
-    private val uri: Uri? = intent.data
+    // Set as var instead of val so it can be reassigned with `uri = builder.build()`
+    private var uri: Uri? = intent.data
 
     private val _formInspectionResult = MutableLiveData<FormInspectionResult>()
     val formInspectionResult: LiveData<FormInspectionResult> = _formInspectionResult
@@ -189,6 +204,7 @@ private class FormUriViewModel(
         scheduler.immediate(
             background = {
                 val error = assertProjectListNotEmpty()
+                    ?: assertValidDeeplinkUri()
                     ?: assertCurrentProjectUsed()
                     ?: assertValidUri()
                     ?: assertFormExists()
@@ -199,8 +215,8 @@ private class FormUriViewModel(
                     FormInspectionResult.Error(error)
                 } else {
                     getSavePoint()?.let {
-                        FormInspectionResult.Savepoint(it)
-                    } ?: FormInspectionResult.Valid
+                        FormInspectionResult.Savepoint(it, uri)
+                    } ?: FormInspectionResult.Valid(uri!!)
                 }
             },
             foreground = {
@@ -209,8 +225,60 @@ private class FormUriViewModel(
         )
     }
 
+    /**
+     * Method to format the uri if it is from a deep link.
+     * If from the browsable link in the format "odkcollect://form/<form_id>",
+     * We will modify the uri to make it valid for the FormFillingActivity
+     */
+    private fun assertValidDeeplinkUri(): String? {
+        if (uri?.scheme == "odkcollect" && uri?.host == "form") {
+
+            // Get the form id from the uri
+            val formId = ContentUriHelper.getIdFromUri(uri!!)
+
+            // If the form id is not valid i.e. -1, return with error message
+            if (formId == -1L) {
+                return "${resources.getString(string.wrong_project_selected_for_form)} And conform that it is downloaded."
+            }
+
+            // Getting currently active project id
+            val currentProjectId = try {
+                projectsDataService.getCurrentProject().uuid
+            } catch (e: Exception) {
+                null
+            }
+
+            // Else build the new uri
+            // We will modify the uri to make it valid for the FormFillingActivity
+            val tempUri = FormsContract.getUri(null)
+            val builder = Uri.Builder()
+                .scheme(tempUri.scheme)
+                .authority(tempUri.authority)
+                .appendPath(tempUri.lastPathSegment)
+                .appendPath(ContentUriHelper.getIdFromUri(uri!!).toString())
+
+            // If projectId is not present in the uri, add it
+            if (!uri!!.queryParameterNames.contains("projectId")) {
+                builder.appendQueryParameter("projectId", currentProjectId)
+            }
+
+            // add all the query parameters from the uri
+            uri!!.queryParameterNames?.forEach { key ->
+                builder.appendQueryParameter(key, uri!!.getQueryParameter(key))
+            }
+
+            // Build the new uri
+            uri = builder.build()
+        }
+        return null
+    }
+
     private fun assertProjectListNotEmpty(): String? {
-        val projects = projectsRepository.getAll()
+        val projects = try {
+            projectsRepository.getAll()
+        } catch (e: Exception) {
+            emptyList()
+        }
         return if (projects.isEmpty()) {
             resources.getString(string.app_not_configured)
         } else {
@@ -219,12 +287,20 @@ private class FormUriViewModel(
     }
 
     private fun assertCurrentProjectUsed(): String? {
-        val projects = projectsRepository.getAll()
-        val firstProject = projects.first()
         val uriProjectId = uri?.getQueryParameter("projectId")
-        val projectId = uriProjectId ?: firstProject.uuid
+        val projectId = if (uriProjectId != null) uriProjectId else {
+            val projects = projectsRepository.getAll()
+            val firstProject = projects.first()
+            firstProject.uuid
+        }
 
-        return if (projectId != projectsDataService.getCurrentProject().uuid) {
+        val currentProjectId = try {
+            projectsDataService.getCurrentProject().uuid
+        } catch (e: Exception) {
+            null
+        }
+
+        return if (projectId != currentProjectId) {
             resources.getString(string.wrong_project_selected_for_form)
         } else {
             null
@@ -284,7 +360,10 @@ private class FormUriViewModel(
                         "\n${resources.getString(string.version)} ${instance.formVersion}"
                     }
 
-                    resources.getString(string.parent_form_not_present, "${instance.formId}$version")
+                    resources.getString(
+                        string.parent_form_not_present,
+                        "${instance.formId}$version"
+                    )
                 } else if (candidateForms.filter { !it.isDeleted }.size > 1) {
                     resources.getString(string.survey_multiple_forms_error)
                 } else {
@@ -354,7 +433,7 @@ private class FormUriViewModel(
         val uriMimeType = contentResolver.getType(uri!!)!!
 
         return SavepointUseCases.getSavepoint(
-            uri,
+            uri!!,
             uriMimeType,
             formsRepositoryProvider.create(),
             instancesRepositoryProvider.create(),
@@ -371,7 +450,7 @@ private class FormUriViewModel(
                 savepointsRepositoryProvider.create().delete(savepoint.formDbId, savepoint.instanceDbId)
             },
             foreground = {
-                _formInspectionResult.value = FormInspectionResult.Valid
+                _formInspectionResult.value = FormInspectionResult.Valid(uri!!)
             }
         )
     }
@@ -392,6 +471,11 @@ private class FormUriViewModel(
 
 private sealed class FormInspectionResult {
     data class Error(val error: String) : FormInspectionResult()
-    data class Savepoint(val savepoint: org.odk.collect.forms.savepoints.Savepoint) : FormInspectionResult()
-    data object Valid : FormInspectionResult()
+    data class Savepoint(
+        val savepoint: org.odk.collect.forms.savepoints.Savepoint,
+        val uri: Uri? = null
+    ) :
+        FormInspectionResult()
+
+    data class Valid(val uri: Uri) : FormInspectionResult()
 }
