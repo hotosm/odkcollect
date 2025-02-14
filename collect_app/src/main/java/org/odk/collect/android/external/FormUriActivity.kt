@@ -14,10 +14,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.odk.collect.analytics.Analytics
 import org.odk.collect.android.R
 import org.odk.collect.android.activities.FormFillingActivity
 import org.odk.collect.android.analytics.AnalyticsEvents
+import org.odk.collect.android.formmanagement.FormsDataService
 import org.odk.collect.android.injection.DaggerUtils
 import org.odk.collect.android.instancemanagement.InstanceDeleter
 import org.odk.collect.android.instancemanagement.canBeEdited
@@ -56,6 +61,9 @@ class FormUriActivity : ComponentActivity() {
 
     @Inject
     lateinit var scheduler: Scheduler
+
+    @Inject
+    lateinit var formsDataService: FormsDataService
 
     private var formFillingAlreadyStarted = false
 
@@ -104,19 +112,52 @@ class FormUriActivity : ComponentActivity() {
 
     private fun startForm(uri: Uri) {
         formFillingAlreadyStarted = true
-        openForm.launch(
-            Intent(this, FormFillingActivity::class.java).apply {
-                action = intent.action
-                data = uri
-                intent.extras?.let { sourceExtras -> putExtras(sourceExtras) }
-                if (!canFormBeEdited(uri)) {
-                    putExtra(
-                        ApplicationConstants.BundleKeys.FORM_MODE,
-                        ApplicationConstants.FormModes.VIEW_SENT
-                    )
+
+        val projectId = uri.getQueryParameter("projectId")
+        val fromDeeplink = uri.queryParameterNames.contains("deeplink")
+        val shouldUpdate =
+            if (uri.queryParameterNames.contains("should_update")) uri.getBooleanQueryParameter(
+                "should_update",
+                false
+            ) else false
+
+        // Only updating form before opening if from deeplink
+        // and should update is true
+        // and project id is not null
+        val shouldDownloadUpdates = projectId != null && fromDeeplink && shouldUpdate
+
+        // Intent to open form in form filling activity
+        val startIntent = Intent(this, FormFillingActivity::class.java).apply {
+            action = intent.action
+            data = uri
+            intent.extras?.let { putExtras(it) }
+            if (!canFormBeEdited(uri)) {
+                putExtra(
+                    ApplicationConstants.BundleKeys.FORM_MODE,
+                    ApplicationConstants.FormModes.VIEW_SENT
+                )
+            }
+        }
+
+        // Checking if should download updates
+        // If should download updates, we will download the updates
+        // and then open the form
+        // Else, we will just open the form
+        if (shouldDownloadUpdates) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    formsDataService.matchFormsWithServer(projectId!!)
+                } catch (e: Exception) {
+                    // Do nothing
+                }
+
+                withContext(Dispatchers.Main) {
+                    openForm.launch(startIntent)
                 }
             }
-        )
+        } else {
+            openForm.launch(startIntent)
+        }
     }
 
     private fun displayErrorDialog(message: String) {
@@ -211,6 +252,9 @@ private class FormUriViewModel(
                     uri.queryParameterNames?.forEach { key ->
                         builder.appendQueryParameter(key, uri.getQueryParameter(key))
                     }
+
+                    // Adding deepLink flag to the uri
+                    builder.appendQueryParameter("deeplink", "true")
 
                     // Build the new uri
                     _uri = builder.build()
