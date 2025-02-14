@@ -194,8 +194,7 @@ private class FormUriViewModel(
     private val changeLockProvider: ChangeLockProvider,
     private val resources: Resources
 ) : ViewModel() {
-    // Set as var instead of val so it can be reassigned with `uri = builder.build()`
-    private var uri: Uri? = intent.data
+    private val uri: Uri? = intent.data
 
     private val _formInspectionResult = MutableLiveData<FormInspectionResult>()
     val formInspectionResult: LiveData<FormInspectionResult> = _formInspectionResult
@@ -231,10 +230,13 @@ private class FormUriViewModel(
      * We will modify the uri to make it valid for the FormFillingActivity
      */
     private fun assertValidDeeplinkUri(): String? {
-        if (uri?.scheme == "odkcollect" && uri?.host == "form") {
+        // Create a copy of uri instead of modifying uri directly (immutable)
+        val currentUri = uri ?: return null // Ensure uri is not null
+
+        if (currentUri.scheme == "odkcollect" && currentUri.host == "form") {
 
             // Get the form id from the uri
-            val formId = ContentUriHelper.getIdFromUri(uri!!)
+            val formId = ContentUriHelper.getIdFromUri(currentUri)
 
             // If the form id is not valid i.e. -1, return with error message
             if (formId == -1L) {
@@ -255,16 +257,16 @@ private class FormUriViewModel(
                 .scheme(tempUri.scheme)
                 .authority(tempUri.authority)
                 .appendPath(tempUri.lastPathSegment)
-                .appendPath(ContentUriHelper.getIdFromUri(uri!!).toString())
+                .appendPath(formId.toString())
 
             // If projectId is not present in the uri, add it
-            if (!uri!!.queryParameterNames.contains("projectId")) {
+            if (!currentUri.queryParameterNames.contains("projectId")) {
                 builder.appendQueryParameter("projectId", currentProjectId)
             }
 
             // add all the query parameters from the uri
-            uri!!.queryParameterNames?.forEach { key ->
-                builder.appendQueryParameter(key, uri!!.getQueryParameter(key))
+            currentUri.queryParameterNames?.forEach { key ->
+                builder.appendQueryParameter(key, currentUri.getQueryParameter(key))
             }
 
             // Build the new uri
