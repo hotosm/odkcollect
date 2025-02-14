@@ -1,0 +1,78 @@
+# Workflow to deploy custom builds on ODK Collect
+
+name: 🔧 Build and Release
+
+on:
+  release:
+    types: [published]
+  # Allow manual trigger (workflow_dispatch)
+  workflow_dispatch:
+
+jobs:
+  build_upload_apk:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    container:
+        image: docker.io/cimg/android:2024.11
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Add Robolectric Deps
+        run: ./download-robolectric-deps.sh
+
+      - name: Compile Code
+        run: ./gradlew assembleDebug
+
+      - name: Install Github CLI
+        run: |
+          sudo apt update
+          sudo apt install --no-install-recommends -y gh
+
+      - name: Debug APK
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          ./gradlew assembleSelfSignedRelease
+
+          apk_path=$(find ./collect_app/build/outputs/apk/selfSignedRelease -name '*.apk' -type f)
+          debug_apk_path="${apk_path%.apk}-debug.apk"
+          echo "Generated APK file: ${apk_path}"
+          mv "${apk_path}" "${debug_apk_path}"
+
+          gh release upload ${{ github.event.release.tag_name }} "${debug_apk_path}"
+
+      - name: Add Signing Key
+        run: |
+          # hotosm.keystore is base64 encoded secret string, first decode
+          echo "${{ secrets.KEYSTORE_FILE_BASE64 }}" | base64 --decode > "$GITHUB_WORKSPACE/hotosm.keystore"
+
+          # Verify the keystore file is correctly created
+          echo "Current dir: ${PWD}"
+          echo "Keystore location: $GITHUB_WORKSPACE/hotosm.keystore"
+          ls -la hotosm.keystore
+
+          echo "RELEASE_STORE_FILE=$GITHUB_WORKSPACE/hotosm.keystore" > secrets.properties
+          echo "RELEASE_STORE_PASSWORD=${{ secrets.KEYSTORE_STOREPASS }}" >> secrets.properties
+          echo "RELEASE_KEY_ALIAS=hotosm-android" >> secrets.properties
+          echo "RELEASE_KEY_PASSWORD=${{ secrets.KEYSTORE_KEYPASS }}" >> secrets.properties
+
+          mkdir -p collect_app/src/odkCollectRelease
+          cp collect_app/src/release/google-services.json collect_app/src/odkCollectRelease/
+
+      - name: Signed APK
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check that keystore exists
+          ls -la "$GITHUB_WORKSPACE"
+
+          ./gradlew collect_app:assembleOdkCollectRelease
+
+          signed_apk_path=$(find ./collect_app/build/outputs/apk/odkCollectRelease -name '*.apk' -type f)
+          echo "Generated APK file: ${signed_apk_path}"
+
+          gh release upload ${{ github.event.release.tag_name }} "${signed_apk_path}"
