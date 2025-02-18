@@ -219,7 +219,15 @@ private class FormUriViewModel(
                 }
             },
             foreground = {
-                _formInspectionResult.value = it
+                _formUriValidationResult.value = if (it == null) {
+                    _uri?.let { uri ->
+                        Valid(uri)
+                    } ?: run {
+                        Invalid("Invalid Uri")
+                    }
+                } else {
+                    Invalid(it)
+                }
             }
         )
     }
