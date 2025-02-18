@@ -13,10 +13,15 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.odk.collect.analytics.Analytics
 import org.odk.collect.android.R
 import org.odk.collect.android.activities.FormFillingActivity
 import org.odk.collect.android.analytics.AnalyticsEvents
+import org.odk.collect.android.formmanagement.FormsDataService
 import org.odk.collect.android.injection.DaggerUtils
 import org.odk.collect.android.instancemanagement.InstanceDeleter
 import org.odk.collect.android.instancemanagement.canBeEdited
@@ -34,6 +39,7 @@ import org.odk.collect.projects.ProjectsRepository
 import org.odk.collect.settings.SettingsProvider
 import org.odk.collect.strings.R.string
 import org.odk.collect.strings.localization.LocalizedActivity
+import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -68,6 +74,9 @@ class FormUriActivity : LocalizedActivity() {
 
     @Inject
     lateinit var changeLockProvider: ChangeLockProvider
+
+    @Inject
+    lateinit var formsDataService: FormsDataService
 
     private var formFillingAlreadyStarted = false
 
@@ -152,13 +161,46 @@ class FormUriActivity : LocalizedActivity() {
 
     private fun startForm(uri: Uri) {
         formFillingAlreadyStarted = true
-        openForm.launch(
-            Intent(this, FormFillingActivity::class.java).apply {
-                action = intent.action
-                data = uri
-                intent.extras?.let { sourceExtras -> putExtras(sourceExtras) }
+
+        val projectId = uri.getQueryParameter("projectId")
+        val fromDeeplink = uri.queryParameterNames.contains("deeplink")
+        val shouldUpdate =
+            if (uri.queryParameterNames.contains("should_update")) uri.getBooleanQueryParameter(
+                "should_update",
+                false
+            ) else false
+
+        // Only updating form before opening if from deeplink
+        // and should update is true
+        // and project id is not null
+        val shouldDownloadUpdates = projectId != null && fromDeeplink && shouldUpdate
+
+        // Intent to open form in form filling activity
+        val startIntent =  Intent(this, FormFillingActivity::class.java).apply {
+            action = intent.action
+            data = uri
+            intent.extras?.let { sourceExtras -> putExtras(sourceExtras) }
+        }
+
+        // Checking if should download updates
+        // If should download updates, we will download the updates
+        // and then open the form
+        // Else, we will just open the form
+        if (shouldDownloadUpdates) {
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    formsDataService.matchFormsWithServer(projectId!!)
+                } catch (e: Exception) {
+                    // Do nothing
+                }
+
+                withContext(Dispatchers.Main) {
+                    openForm.launch(startIntent)
+                }
             }
-        )
+        } else {
+            openForm.launch(startIntent)
+        }
     }
 
     private fun displayErrorDialog(message: String) {
@@ -194,7 +236,7 @@ private class FormUriViewModel(
     private val changeLockProvider: ChangeLockProvider,
     private val resources: Resources
 ) : ViewModel() {
-    private val uri: Uri? = intent.data
+    private var uri: Uri? = intent.data
 
     private val _formInspectionResult = MutableLiveData<FormInspectionResult>()
     val formInspectionResult: LiveData<FormInspectionResult> = _formInspectionResult
@@ -219,15 +261,7 @@ private class FormUriViewModel(
                 }
             },
             foreground = {
-                _formUriValidationResult.value = if (it == null) {
-                    _uri?.let { uri ->
-                        Valid(uri)
-                    } ?: run {
-                        Invalid("Invalid Uri")
-                    }
-                } else {
-                    Invalid(it)
-                }
+                _formInspectionResult.value = it
             }
         )
     }
@@ -276,6 +310,9 @@ private class FormUriViewModel(
             currentUri.queryParameterNames?.forEach { key ->
                 builder.appendQueryParameter(key, currentUri.getQueryParameter(key))
             }
+
+            // Adding deepLink flag to the uri
+            builder.appendQueryParameter("deeplink", "true")
 
             // Build the new uri
             uri = builder.build()
@@ -335,13 +372,14 @@ private class FormUriViewModel(
     }
 
     private fun assertFormExists(): String? {
-        val uriMimeType = contentResolver.getType(uri!!)
+        val uriMimeType = uri?.let { contentResolver.getType(it) }
 
         return if (uriMimeType == FormsContract.CONTENT_ITEM_TYPE) {
             val formExists =
-                formsRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(uri))?.let {
-                    File(it.formFilePath).exists()
-                } ?: false
+                uri?.let { formsRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(it)) }
+                    ?.let {
+                        File(it.formFilePath).exists()
+                    } ?: false
 
             if (formExists) {
                 null
@@ -349,7 +387,9 @@ private class FormUriViewModel(
                 resources.getString(string.bad_uri)
             }
         } else {
-            val instance = instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(uri))
+            val instance = uri?.let {
+                instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(it))
+            }
             if (instance == null) {
                 resources.getString(string.bad_uri)
             } else if (!File(instance.instanceFilePath).exists()) {
@@ -384,11 +424,13 @@ private class FormUriViewModel(
     }
 
     private fun assertFormNotEncrypted(): String? {
-        val uriMimeType = contentResolver.getType(uri!!)
+        val uriMimeType = uri?.let { contentResolver.getType(it) }
 
         return if (uriMimeType == InstancesContract.CONTENT_ITEM_TYPE) {
-            val instance = instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(uri))
-            if (instance!!.canEditWhenComplete()) {
+            val instance = uri?.let {
+                instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(it))
+            }
+            if (instance?.canEditWhenComplete() == true) {
                 null
             } else {
                 resources.getString(string.encrypted_form)
@@ -417,15 +459,21 @@ private class FormUriViewModel(
         }
 
         val usesEntities = if (uriMimeType == FormsContract.CONTENT_ITEM_TYPE) {
-            val form = formsRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(uri))!!
-            form.usesEntities()
+            val form =
+                uri?.let { formsRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(it)) }
+            form?.usesEntities()
         } else {
-            val instance = instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(uri))!!
-            val form = formsRepositoryProvider.create().getAllByFormIdAndVersion(instance.formId, instance.formVersion).first()
-            form.usesEntities()
+            val instance = uri?.let {
+                instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(it))
+            }
+            val form = instance?.let {
+                formsRepositoryProvider.create().getAllByFormIdAndVersion(it.formId, it.formVersion)
+                    .firstOrNull()
+            }
+            form?.usesEntities()
         }
 
-        if (usesEntities) {
+        if (usesEntities == true) {
             val formsLock = changeLockProvider.create(projectId).formsLock
             val isLocAcquired = formsLock.tryLock()
 
@@ -457,7 +505,8 @@ private class FormUriViewModel(
                 if (savepoint.instanceDbId == null) {
                     File(savepoint.instanceFilePath).parentFile?.deleteRecursively()
                 }
-                savepointsRepositoryProvider.create().delete(savepoint.formDbId, savepoint.instanceDbId)
+                savepointsRepositoryProvider.create()
+                    .delete(savepoint.formDbId, savepoint.instanceDbId)
             },
             foreground = {
                 _formInspectionResult.value = FormInspectionResult.Valid(uri!!)
@@ -469,8 +518,10 @@ private class FormUriViewModel(
         val uriMimeType = contentResolver.getType(uri!!)
 
         val formEditingEnabled = if (uriMimeType == InstancesContract.CONTENT_ITEM_TYPE) {
-            val instance = instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(uri))
-            instance!!.canBeEdited(settingsProvider)
+            val instance = uri?.let {
+                instancesRepositoryProvider.create().get(ContentUriHelper.getIdFromUri(it))
+            }
+            instance?.canBeEdited(settingsProvider) == true
         } else {
             true
         }
