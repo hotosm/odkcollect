@@ -39,7 +39,6 @@ import org.odk.collect.projects.ProjectsRepository
 import org.odk.collect.settings.SettingsProvider
 import org.odk.collect.strings.R.string
 import org.odk.collect.strings.localization.LocalizedActivity
-import timber.log.Timber
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Locale
@@ -176,7 +175,7 @@ class FormUriActivity : LocalizedActivity() {
         val shouldDownloadUpdates = projectId != null && fromDeeplink && shouldUpdate
 
         // Intent to open form in form filling activity
-        val startIntent =  Intent(this, FormFillingActivity::class.java).apply {
+        val startIntent = Intent(this, FormFillingActivity::class.java).apply {
             action = intent.action
             data = uri
             intent.extras?.let { sourceExtras -> putExtras(sourceExtras) }
@@ -187,19 +186,33 @@ class FormUriActivity : LocalizedActivity() {
         // and then open the form
         // Else, we will just open the form
         if (shouldDownloadUpdates) {
-            CoroutineScope(Dispatchers.IO).launch {
-                try {
-                    formsDataService.matchFormsWithServer(projectId!!)
-                } catch (e: Exception) {
-                    // Do nothing
-                }
-
-                withContext(Dispatchers.Main) {
+            updateFormIfNecessary(
+                projectId = projectId!!,
+                onResult = {
                     openForm.launch(startIntent)
                 }
-            }
+            )
         } else {
             openForm.launch(startIntent)
+        }
+    }
+
+    private fun updateFormIfNecessary(
+        projectId: String,
+        onResult: (Boolean) -> Unit
+    ) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                changeLockProvider.create(projectId).formsLock.unlock()
+                val result = formsDataService.matchFormsWithServer(projectId, false)
+                withContext(Dispatchers.Main) {
+                    onResult(result)
+                }
+            } catch (e: Exception) {
+                withContext(Dispatchers.Main) {
+                    onResult(false)
+                }
+            }
         }
     }
 
