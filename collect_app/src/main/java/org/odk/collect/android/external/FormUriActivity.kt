@@ -201,9 +201,11 @@ class FormUriActivity : LocalizedActivity() {
         projectId: String,
         onResult: (Boolean) -> Unit
     ) {
+        val formsLock = changeLockProvider.create(projectId).formsLock
+
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                changeLockProvider.create(projectId).formsLock.unlock()
+                formsLock.unlock()
                 val result = formsDataService.matchFormsWithServer(projectId, false)
                 withContext(Dispatchers.Main) {
                     onResult(result)
@@ -212,6 +214,8 @@ class FormUriActivity : LocalizedActivity() {
                 withContext(Dispatchers.Main) {
                     onResult(false)
                 }
+            } finally {
+                formsLock.unlock()
             }
         }
     }
